@@ -1,22 +1,29 @@
 # -*- coding: utf-8 -*-
 import os
+import random
 import re
 import sys
 
 import config
 import requests
+import redis
 from lxml import etree
+
+from utils.proxy import Proxy
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
 
 
-class Spider(object):
+class _Spider(object):
+    '''
+    发送request请求,　处理response响应
+    '''
     def __init__(self):
-        self.cn = config.CN
-        self.proxy = config.proxy
+        self.db = redis.StrictRedis()
         self.headers = config.headers
         self.patterns = re.compile(r'/')
+        self.proxy = config.proxy
 
         if not os.path.exists(config.FILES_ROOT):
             os.mkdir(config.FILES_ROOT)
@@ -29,14 +36,46 @@ class Spider(object):
         return cls._instance
 
     def user_agent_random(self):
+        '''
+        随机产生user-agent
+        '''
         headers = self.headers
-        user_agent = config.user_agent_list
+        user_agent = random.choice(config.user_agent_list)
+
         headers['User-Agent'] = user_agent
+        self.headers = headers
+
+    def proxy_random(self):
+        '''
+        随机代理
+        '''
+        db = redis.StrictRedis()
+        try:
+            proxy_list = db.get('proxy')
+        except Exception as e:
+            print '[ERROR]: proxy查询错误'
+            return {}
+
+        if proxy_list is None:
+            proxy_list = Proxy().get_pro_ip()
+
+        proxy = random.choice(proxy_list)
+        self.proxy = proxy
 
     def get_response(self, url, method='get', **kwargs):
+        '''
+        发送请求, 获取response响应
+        '''
+        self.user_agent_random()
+
         if method == 'get':
             try:
-                response = requests.get(url, headers=self.headers, **kwargs)
+                response = requests.get(
+                    url,
+                    headers=self.headers,
+                    # proxy = self.proxy,
+                    **kwargs
+                )
             except Exception as e:
                 print '[ERROR]: 请求错误 %s' % e
                 response = None
@@ -52,6 +91,9 @@ class Spider(object):
         return response
 
     def parse_xpath(self, xpath_rules, html='', **kwargs):
+        '''
+        将提取的xpath规则以字典形式传入，　处理后以字典形式返回
+        '''
         xml_obj = kwargs.get('xml_obj', '')
         if xml_obj != '':
             xpath_obj_dict = {}
@@ -72,6 +114,9 @@ class Spider(object):
         return xpath_obj_dict
 
     def make_dir(self, title, base_path):
+        '''
+        创建文件夹
+        '''
         new_title = self.patterns.sub('', title)
 
         file_path = base_path + new_title + '/'
@@ -82,15 +127,5 @@ class Spider(object):
 
         return file_path
 
+Spider = _Spider.instance
 
-spider = Spider.instance()
-
-
-def main():
-    url = 'http://www.sz.58.com/'
-    spider = Spider()
-    spider.spider_scheduler(url)
-
-
-if __name__ == '__main__':
-    main()
